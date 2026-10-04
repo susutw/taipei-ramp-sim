@@ -6,7 +6,7 @@
 - **3D 試開**：車子自動沿路前進，你只要決定車道；在岔路走錯車道就會開錯，系統會告訴你正確做法。
 - 目前可試開：**建國高架南下（長安東路上、仁愛路下）**。
 
-網站：https://susutw.github.io/taipei-ramp-sim/
+網站：https://sudosu.tw/taipei-ramp-sim/
 
 | 地圖 | 3D 試開 |
 |---|---|
@@ -52,7 +52,14 @@ OpenStreetMap ──Overpass──▶ data/raw/*.json
 
 - **出入口分組**（`build-ramps.mjs`）：相連的 `*_link` 匝道段視為同一個出入口，看兩端接在主線或平面道路，判斷是入口、出口或系統匝道；方向由主線在接點的走向判斷。
 - **3D 場景**（`build-scene.mjs`）：OSM 沒有道路高度，只有上下層關係（`layer`、`bridge`）。高架主線固定在 `layer × 8 m`，平面道路為 0，匝道與引道用相鄰節點平滑內插出坡度。路寬來自 `lanes`，建物高度來自 `height` 或 `building:levels`。
-- **岔路與車道**（`src/drive/graph.js`）：在岔路依各去向的車道數，由左到右分配車道；指示牌文字來自 OSM 的 `destination` 或道路名稱。人工校對過的岔路（`data/forks.json`）優先採用。
+- **岔路與車道**（`src/drive/graph.js`）：每個去向可走哪些車道，依序採用
+  1. 人工校對（`data/forks.json`）
+  2. OSM 的 `turn:lanes`（例：`through|through;slight_right|slight_right`，共用車道兩個方向都算對）
+  3. 依各去向的車道數由左到右推算
+
+  指示牌文字來自 `data/forks.json`，其次是 OSM 的 `destination` 或道路名稱。`?debug=1` 會顯示每個岔路用的是哪一種來源。
+
+  > 想讓車道更準，最有效的方式是到 OpenStreetMap 幫岔路前的路段補上 `turn:lanes`（[說明](https://wiki.openstreetmap.org/wiki/Key:turn)），所有使用 OSM 的服務都會受惠。
 
 ### 更新資料
 
@@ -76,9 +83,11 @@ Overpass 伺服器忙碌時會自動重試、換備用伺服器。
 ### 測試
 
 ```sh
+npm test                # 單元測試（岔路車道分配），不需要瀏覽器
+
 npm install
 npm run serve           # 另一個終端機
-npm run test:e2e        # 需要 Chromium；可用 CHROMIUM_PATH 指定
+npm run test:e2e        # 端對端：自動駕駛跑完每個任務；需要 Chromium，可用 CHROMIUM_PATH 指定
 ```
 
 ## 授權

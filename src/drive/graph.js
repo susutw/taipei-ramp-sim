@@ -35,6 +35,30 @@ function lanesFor(way, dir) {
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const U_TURN = 1.75; // 超過約 100° 視為迴轉，不列入選項
 
+// turn:lanes 的值 → 左（L）、直行（T）、右（R）
+const TURN_SIDE = {
+  left: 'L', slight_left: 'L', sharp_left: 'L', merge_to_left: 'L',
+  right: 'R', slight_right: 'R', sharp_right: 'R', merge_to_right: 'R',
+  through: 'T', none: 'T', '': 'T',
+};
+
+// 依 OSM turn:lanes（例：「through|through;slight_right|slight_right」）算出每個去向可走的車道範圍。
+// opts 已由左到右排序；左轉值對應最左的去向、右轉值對應最右的去向、直行對應 throughIdx。
+// 共用車道（through;slight_right）會讓兩個去向的範圍重疊。任一去向沒有車道時回傳 null。
+export function lanesFromTurnLanes(value, count, throughIdx) {
+  const ranges = Array.from({ length: count }, () => [Infinity, -Infinity]);
+  value.split('|').forEach((lane, i) => {
+    for (const t of lane.split(';')) {
+      const side = TURN_SIDE[t.trim()];
+      if (!side) continue;
+      const j = side === 'L' ? 0 : side === 'R' ? count - 1 : throughIdx;
+      ranges[j][0] = Math.min(ranges[j][0], i);
+      ranges[j][1] = Math.max(ranges[j][1], i + 1);
+    }
+  });
+  return ranges.every(([a]) => a !== Infinity) ? ranges : null;
+}
+
 export class RoadGraph {
   // forks：data/forks.json 的人工校對資料
   constructor(scene, forks = {}) {
@@ -48,6 +72,12 @@ export class RoadGraph {
     this.out = Array.from({ length: count }, () => []);
     this.in = Array.from({ length: count }, () => []);
     this.dirEdge = new Map(); // "場景路段索引:方向" → 有向邊
+    this.wayFirst = new Map(); // way id → 第一個節點（turn:lanes 只描述道路終點的車道）
+    this.wayLast = new Map();
+    for (const e of scene.edges) {
+      if (!this.wayFirst.has(e.w)) this.wayFirst.set(e.w, e.n[0]);
+      this.wayLast.set(e.w, e.n.at(-1));
+    }
 
     scene.edges.forEach((e, ei) => {
       const way = scene.ways[e.w];
@@ -115,8 +145,18 @@ export class RoadGraph {
     return `${D.w}@${this.nodeIds[D.pts.at(-1)]}`;
   }
 
+  // D 終點的 turn:lanes（只有 D 開到道路終點時才適用）
+  turnLanesAt(D) {
+    const end = D.d === 1 ? this.wayLast.get(D.w) : this.wayFirst.get(D.w);
+    if (D.pts.at(-1) !== end) return null;
+    const v = D.way.oneway ? D.way.turnLanes : D.d === 1 ? D.way.turnLanesF : D.way.turnLanesB;
+    return v && v.split('|').length === D.lanes ? v : null;
+  }
+
   // 在 D 的終點，駕駛會面臨的選項，以及每個選項對應的車道範圍 [a, b)。
   // 只有一個選項時不需要駕駛決定（路口直行、路段接續）。
+  // 車道範圍的來源（src）優先順序：data/forks.json 人工校對 > OSM turn:lanes > 依車道數推算。
+  // 共用車道時，不同去向的範圍可能重疊。
   branches(D) {
     if (this._branches.has(D.id)) return this._branches.get(D.id);
     const cands = this.candidates(D).filter((c) => Math.abs(this.turn(D, c)) < U_TURN);
@@ -139,28 +179,35 @@ export class RoadGraph {
     opts.sort((p, q) => this.turn(D, q) - this.turn(D, p)); // 由左到右
     const n = D.lanes;
     let result;
+    const through = straightest(opts);
     if (opts.length <= 1) {
-      result = opts.map((edge) => ({ edge, a: 0, b: n, through: true }));
+      result = opts.map((edge) => ({ edge, a: 0, b: n, through: true, src: '推算' }));
     } else {
-      const through = straightest(opts);
       const k = opts.length;
       const need = opts.map((o) => (o === through ? 0 : Math.min(o.lanes, Math.max(1, n - (k - 1)))));
       const side = need.reduce((s, v) => s + v, 0);
       if (side < n) {
         need[opts.indexOf(through)] = n - side;
         let a = 0;
-        result = opts.map((edge, j) => ({ edge, a, b: (a += need[j]), through: edge === through }));
+        result = opts.map((edge, j) => ({ edge, a, b: (a += need[j]), through: edge === through, src: '推算' }));
       } else {
         // 車道不夠分（例如單車道匝道再分岔）：平均分配，必要時共用
         result = opts.map((edge, j) => {
           let a = Math.floor((j * n) / k);
           let b = Math.floor(((j + 1) * n) / k);
           if (b <= a) { a = Math.min(j, n - 1); b = a + 1; }
-          return { edge, a, b, through: edge === through };
+          return { edge, a, b, through: edge === through, src: '推算' };
+        });
+      }
+      const tl = this.turnLanesAt(D);
+      const ranges = tl && lanesFromTurnLanes(tl, k, opts.indexOf(through));
+      if (ranges) {
+        result.forEach((r, j) => {
+          [r.a, r.b] = ranges[j];
+          r.src = 'turn:lanes';
         });
       }
     }
-    // 人工校對過的車道分配優先
     const fork = this.forks[this.forkKey(D)];
     if (fork?.branches) {
       for (const r of result) {
@@ -168,7 +215,7 @@ export class RoadGraph {
         if (lanes) {
           r.a = Math.max(0, lanes[0] - 1);
           r.b = Math.min(n, lanes[1]);
-          r.checked = true;
+          r.src = '人工校對';
         }
       }
     }
