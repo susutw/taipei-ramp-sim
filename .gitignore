@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+# 從 OSM 抓下來的原始資料（可用 scripts 重抓）
+data/raw/*.json
+data/raw/surface.overpassql
+test-results/

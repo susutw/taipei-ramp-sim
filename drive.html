@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛣️</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>3D 試開｜台北高架出入口練習</title>
+  <link rel="stylesheet" href="src/style.css">
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body class="drive-page">
+  <div id="view"></div>
+  <div id="loading">載入場景中…</div>
+
+  <div id="top" class="hud">
+    <div id="mission" class="card">
+      <b id="title"></b>
+      <div id="road"></div>
+      <div id="speed"></div>
+      <div><a href="index.html">← 回地圖</a></div>
+    </div>
+    <canvas id="minimap" width="360" height="360"></canvas>
+  </div>
+  <div id="hint" class="hud"></div>
+  <div id="bottom" class="hud">
+    <div id="lanes"></div>
+    <div id="keys" class="card">
+      <kbd>←</kbd><kbd>→</kbd> 換車道　<kbd>↑</kbd><kbd>↓</kbd> 加減速　<kbd>空白</kbd> 暫停　<kbd>C</kbd> 視角　<kbd>H</kbd> 提示　<kbd>R</kbd> 重來
+    </div>
+  </div>
+  <div id="touch">
+    <div><button data-key="ArrowLeft" aria-label="左換車道">◀</button><button data-key="ArrowRight" aria-label="右換車道">▶</button></div>
+    <div><button data-key="KeyC" aria-label="切換視角">👁</button><button data-key="ArrowDown" aria-label="減速">▼</button><button data-key="ArrowUp" aria-label="加速">▲</button></div>
+  </div>
+
+  <div id="overlay"><div class="box" id="overlayBox"></div></div>
+
+  <script type="module" src="src/drive/main.js"></script>
+</body>
+</html>

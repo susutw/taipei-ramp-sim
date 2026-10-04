@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛣️</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>台北高架出入口練習</title>
+  <meta name="description" content="在地圖上找到台北市各個高架、快速道路與國道的出入口，先用 3D 試開熟悉路線。">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body class="map-page">
+  <aside id="panel">
+    <header>
+      <h1>台北高架出入口練習</h1>
+      <p class="sub">點選地圖上的出入口，看它接到哪裡；有 <span class="badge drive">可試開</span> 標記的可以進 3D 開開看。</p>
+    </header>
+    <div class="controls">
+      <input id="search" type="search" placeholder="搜尋：建國、信義路、出口…" autocomplete="off">
+      <div id="kinds" class="chips" role="group" aria-label="類型篩選">
+        <button data-kind="" class="on">全部</button>
+        <button data-kind="入口">入口</button>
+        <button data-kind="出口">出口</button>
+        <button data-kind="系統">系統</button>
+      </div>
+      <label class="check"><input id="driveOnly" type="checkbox"> 只看可試開</label>
+    </div>
+    <div id="count" class="count"></div>
+    <ul id="list"></ul>
+    <footer>
+      道路資料 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> 貢獻者。
+      名稱與方向由程式自動判斷，可能有誤，<a href="https://github.com/susutw/taipei-ramp-sim/issues" target="_blank" rel="noopener">歡迎回報</a>。
+    </footer>
+  </aside>
+  <button id="togglePanel" aria-label="切換列表">列表</button>
+  <main id="map"></main>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script type="module" src="src/map.js"></script>
+</body>
+</html>
