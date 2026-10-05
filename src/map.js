@@ -4,22 +4,24 @@ import { alias } from './drive/graph.js';
 
 const KIND_COLOR = { 入口: '#16a34a', 出口: '#dc2626', 系統: '#2563eb', 雙向: '#9333ea', 其他: '#6b7280' };
 
-const [ramps, mainlines, scenarios] = await Promise.all([
+const [ramps, mainlines, scenarios, drivable] = await Promise.all([
   fetch('data/ramps.geojson').then((r) => r.json()),
   fetch('data/mainlines.geojson').then((r) => r.json()),
   fetch('data/scenarios.json').then((r) => r.json()),
+  fetch('data/drivable.json').then((r) => (r.ok ? r.json() : {})),
 ]);
 
+// 有手寫任務的用手寫任務，其餘通過自動驗證的用自動任務
 const scenarioByRamp = new Map(scenarios.map((s) => [s.ramp, s]));
 for (const f of ramps.features) {
-  f.properties.drive = scenarioByRamp.has(f.properties.id);
+  f.properties.drive = scenarioByRamp.has(f.properties.id) || f.properties.id in drivable;
 }
 const points = {
   type: 'FeatureCollection',
   features: ramps.features.map((f) => ({
     type: 'Feature',
     geometry: { type: 'Point', coordinates: f.properties.point },
-    properties: { id: f.properties.id, kind: f.properties.kind, drive: f.properties.drive },
+    properties: { id: f.properties.id, kind: f.properties.kind, drive: f.properties.drive, featured: scenarioByRamp.has(f.properties.id) },
   })),
 };
 const byId = new Map(ramps.features.map((f) => [f.properties.id, f]));
@@ -65,7 +67,7 @@ map.on('load', () => {
     id: 'drive-ring',
     type: 'circle',
     source: 'points',
-    filter: ['get', 'drive'],
+    filter: ['get', 'featured'],
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 9, 16, 15],
       'circle-color': '#facc15',
@@ -140,7 +142,9 @@ function popupHTML(p) {
   const scenario = scenarioByRamp.get(p.id);
   const drive = scenario
     ? `<a class="btn primary" href="drive.html?s=${encodeURIComponent(scenario.id)}">3D 試開：${esc(scenario.title)}</a>`
-    : `<span class="muted">這個出入口還沒有 3D 試開，<a href="https://github.com/susutw/taipei-ramp-sim/issues" target="_blank" rel="noopener">看進度</a></span>`;
+    : p.drive
+      ? `<a class="btn primary" href="drive.html?r=${encodeURIComponent(p.id)}">3D 試開</a>`
+      : `<span class="muted">這個出入口還無法自動試開，<a href="https://github.com/susutw/taipei-ramp-sim/blob/main/docs/drivable-report.md" target="_blank" rel="noopener">看原因</a></span>`;
   return `
     <h3>${esc(p.title)}</h3>
     <table>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
