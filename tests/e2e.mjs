@@ -37,6 +37,17 @@ for (const s of scenarios) {
   check(result.includes('成功'), `任務 ${s.id}：${result}`);
 }
 
+// 自動任務：抽幾個已驗證可試開的出入口，在瀏覽器裡實際跑一次
+const drivable = Object.keys(JSON.parse(readFileSync('data/drivable.json', 'utf8')));
+const sample = [...new Set([drivable[0], drivable[Math.floor(drivable.length / 2)], drivable.at(-1)])].filter(Boolean);
+for (const id of sample) {
+  await page.goto(`${BASE}/drive.html?r=${id}&auto=1&fast=1`);
+  await page.waitForFunction(() => window.__drive, null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__drive.status === 'done', null, { timeout: 240000 });
+  const result = await page.evaluate(() => window.__drive.overlayText().split('\n')[0]);
+  check(result.includes('成功'), `自動任務 ${id}：${result}`);
+}
+
 check(errors.length === 0, `沒有 JavaScript 錯誤${errors.length ? `：${errors.join(' / ')}` : ''}`);
 await browser.close();
 process.exit(failed ? 1 : 0);

@@ -33,7 +33,7 @@ function lanesFor(way, dir) {
 
 // 角度差，結果在 -π..π，正值代表往左
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-const U_TURN = 1.75; // 超過約 100° 視為迴轉，不列入選項
+const U_TURN = 2.6; // 超過約 150° 視為迴轉，不列入選項（台北有不少急轉進匝道的入口，約 110–120°）
 
 // turn:lanes 的值 → 左（L）、直行（T）、右（R）
 const TURN_SIDE = {

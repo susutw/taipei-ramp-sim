@@ -8,7 +8,10 @@
     "data": "scripts/update-data.sh",
     "scene:jianguo": "scripts/fetch-osm.sh data/raw/scene-jianguo.overpassql data/raw/scene-jianguo.json && node scripts/build-scene.mjs jianguo",
     "test:e2e": "node tests/e2e.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "regions": "node scripts/build-regions.mjs",
+    "scenes": "scripts/update-scenes.sh",
+    "check": "node scripts/check-drivable.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"

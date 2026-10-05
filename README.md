@@ -4,7 +4,7 @@
 
 - **地圖**：台北市 172 個高架／快速道路／國道出入口，點選可看接到哪裡、街景連結。
 - **3D 試開**：車子自動沿路前進，你只要決定車道；在岔路走錯車道就會開錯，系統會告訴你正確做法。
-- 目前可試開：**建國高架南下（長安東路上、仁愛路下）**。
+- 大部分出入口都可以**自動產生**試開任務（驗證結果見 [docs/drivable-report.md](docs/drivable-report.md)）；另有經過設計、附任務說明的精選路線：**建國高架南下（長安東路上、仁愛路下）**。
 
 網站：https://sudosu.tw/taipei-ramp-sim/
 
@@ -32,7 +32,8 @@ python3 -m http.server 8931 --bind 127.0.0.1
 
 | 參數 | 用途 |
 |---|---|
-| `s=<任務 id>` | 選擇任務（見 `data/scenarios.json`） |
+| `s=<任務 id>` | 手寫任務（見 `data/scenarios.json`） |
+| `r=<出入口 id>` | 自動產生該出入口的任務（出入口 id 是地圖網址 `#` 後面那串） |
 | `debug=1` | 顯示岔路代碼與各去向的 way id，人工校對用 |
 | `auto=1` | 自動駕駛走正確路線（測試用） |
 | `fast=1` | 時間加速 4 倍（測試用） |
@@ -45,13 +46,18 @@ python3 -m http.server 8931 --bind 127.0.0.1
 OpenStreetMap ──Overpass──▶ data/raw/*.json
                               │
       scripts/build-ramps.mjs ├──▶ data/ramps.geojson、data/mainlines.geojson ──▶ 地圖（index.html）
-      scripts/build-scene.mjs └──▶ data/scenes/<場景>.json ──────────────────────▶ 3D 試開（drive.html）
+    scripts/build-regions.mjs ├──▶ data/regions.json（出入口分成 35 區）
+      scripts/build-scene.mjs └──▶ data/scenes/<區域>.json ──────────────────────▶ 3D 試開（drive.html）
+                                          │
+   scripts/check-drivable.mjs ────────────┴─▶ data/drivable.json、docs/drivable-report.md
                                           ▲
               人工校對：data/overrides/ramps.json、data/forks.json
 ```
 
 - **出入口分組**（`build-ramps.mjs`）：相連的 `*_link` 匝道段視為同一個出入口，看兩端接在主線或平面道路，判斷是入口、出口或系統匝道；方向由主線在接點的走向判斷。
 - **3D 場景**（`build-scene.mjs`）：OSM 沒有道路高度，只有上下層關係（`layer`、`bridge`）。高架主線固定在 `layer × 8 m`，平面道路為 0，匝道與引道用相鄰節點平滑內插出坡度。路寬來自 `lanes`，建物高度來自 `height` 或 `building:levels`。
+- **自動任務**（`src/drive/auto.js`）：入口從平面道路上、離匝道口約 280 m 處出發，匯入主線就算成功；出口從主線上約 450 m 前出發，開進出口匝道就算成功；系統匝道從來源主線出發，接上目標主線就算成功。
+- **驗證**（`scripts/check-drivable.mjs`）：不開瀏覽器，用和網頁相同的駕駛邏輯（`src/drive/sim.js`）讓自動駕駛跑每一個任務，跑得完的才在地圖上標「可試開」。
 - **岔路與車道**（`src/drive/graph.js`）：每個去向可走哪些車道，依序採用
   1. 人工校對（`data/forks.json`）
   2. OSM 的 `turn:lanes`（例：`through|through;slight_right|slight_right`，共用車道兩個方向都算對）
@@ -65,12 +71,17 @@ OpenStreetMap ──Overpass──▶ data/raw/*.json
 
 ```sh
 npm run data            # 重抓全台北出入口並產生 data/ramps.geojson
-npm run scene:jianguo   # 重抓建國高架周邊並產生 data/scenes/jianguo.json
+npm run regions         # 依出入口位置分區
+npm run scenes          # 抓取並建立各區 3D 場景（只抓還沒抓過的；全部重抓加 -- --force）
+npm run check           # 驗證每個出入口能否自動試開，更新 data/drivable.json 與報告
+npm run scene:jianguo   # 重抓精選任務用的建國高架場景
 ```
 
 Overpass 伺服器忙碌時會自動重試、換備用伺服器。
 
-### 新增一個試開任務
+### 新增一個精選任務（附任務說明）
+
+自動任務只會「上匝道」或「下匝道」；想設計「從 A 上、經過兩個出口、在 C 下」這種完整路線，就寫手寫任務：
 
 1. 寫一個 `data/raw/scene-<名稱>.overpassql`（照 `scene-jianguo.overpassql` 改範圍），執行 `scripts/fetch-osm.sh` 與 `node scripts/build-scene.mjs <名稱>`。
 2. 在 `data/scenarios.json` 加一筆：

@@ -1,14 +1,17 @@
 // 試開頁：載入任務與場景，處理駕駛、鏡頭、提示與成功／失敗判定。
 //
 // 網址參數：
-//   s=<任務 id>   要開的任務（data/scenarios.json）
+//   s=<任務 id>   要開的手寫任務（data/scenarios.json）
+//   r=<出入口 id> 自動產生該出入口的任務（場景見 data/regions.json）
 //   auto=1        自動駕駛走正確路線（測試用）
 //   fast=1        時間加速 4 倍（測試用）
 //   debug=1       顯示岔路代碼與各去向的 way id（人工校對 data/forks.json 用）
 
 import * as THREE from 'three';
-import { RoadGraph, isMajor, laneText, alias } from './graph.js';
+import { RoadGraph, isMajor, alias } from './graph.js';
 import { buildWorld } from './world.js';
+import { planScenario, Drive } from './sim.js';
+import { autoScenario } from './auto.js';
 
 const params = new URLSearchParams(location.search);
 const AUTO = params.has('auto');
@@ -18,53 +21,44 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // ---- 載入 ----
+const getJSON = (url) => fetch(url).then((r) => {
+  if (!r.ok) throw new Error(`${url}（HTTP ${r.status}）`);
+  return r.json();
+});
 let scenario;
 let graph;
+let plan;
 try {
-  const scenarios = await fetch('data/scenarios.json').then((r) => r.json());
-  scenario = scenarios.find((s) => s.id === params.get('s')) || scenarios[0];
-  const [scene, forks] = await Promise.all([
-    fetch(`data/scenes/${scenario.scene}.json`).then((r) => r.json()),
-    fetch('data/forks.json').then((r) => (r.ok ? r.json() : {})),
-  ]);
-  graph = new RoadGraph(scene, forks);
+  const forks = await getJSON('data/forks.json').catch(() => ({}));
+  const rampId = params.get('r');
+  let scene;
+  if (rampId) {
+    const [ramps, regions] = await Promise.all([getJSON('data/ramps.geojson'), getJSON('data/regions.json')]);
+    const ramp = ramps.features.find((f) => f.properties.id === rampId)?.properties;
+    const region = Object.entries(regions).find(([, r]) => r.ramps.includes(rampId))?.[0];
+    if (!ramp) throw new Error(`找不到出入口 ${rampId}`);
+    if (!region) throw new Error('這個出入口還沒有 3D 場景');
+    scene = await getJSON(`data/scenes/${region}.json`);
+    graph = new RoadGraph(scene, forks);
+    const res = autoScenario(graph, ramp);
+    if (res.error) throw new Error(res.error);
+    scenario = res.scenario;
+  } else {
+    const scenarios = await getJSON('data/scenarios.json');
+    scenario = scenarios.find((x) => x.id === params.get('s')) || scenarios[0];
+    scene = await getJSON(`data/scenes/${scenario.scene}.json`);
+    graph = new RoadGraph(scene, forks);
+  }
+  plan = planScenario(graph, scenario);
+  if (!plan) throw new Error('這個任務找不到可行路線');
   var world = buildWorld(scene, graph);
 } catch (err) {
-  $('loading').textContent = `載入失敗：${err.message}`;
+  $('loading').innerHTML = `無法開始試開：${esc(err.message)}<br><a href="index.html" style="color:#fff">回地圖</a>`;
   throw err;
 }
-
-const goalWays = new Set(scenario.goalWays);
-const isGoal = (e) => goalWays.has(e.w);
-const allowed = (e) => scenario.allowNames.includes(e.way.name) || isGoal(e);
-
-const start = graph.findStart(scenario.start.node, scenario.start.back, allowed);
-const route = graph.route(start.edge, isGoal, allowed);
-if (!route) {
-  $('loading').textContent = '這個任務找不到可行路線，請檢查 data/scenarios.json。';
-  throw new Error('no route');
-}
-
-// 路線上每個需要選擇的岔路
-const steps = [];
-{
-  let at = -start.s;
-  route.forEach((D, i) => {
-    at += D.len;
-    const next = route[i + 1];
-    if (!next) return;
-    const br = graph.branches(D);
-    if (br.length < 2) return;
-    const ok = br.find((b) => b.edge === next);
-    if (!ok) return;
-    const others = br.filter((b) => b !== ok).map((b) => `「${graph.labelFor(b.edge, D)}」`);
-    const lanes = laneText(ok.a, ok.b, D.lanes);
-    const text = ok.through
-      ? `保持${lanes}直行，不要往${others.join('、')}`
-      : `走${lanes}，往「${graph.labelFor(ok.edge, D)}」`;
-    steps.push({ i, D, ok, br, text, at });
-  });
-}
+const { route, steps } = plan;
+const drive = new Drive(graph, plan);
+const car = drive.car;
 
 // ---- three.js ----
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -94,8 +88,6 @@ $('loading').remove();
 $('title').textContent = scenario.title;
 
 // ---- 狀態 ----
-const car = {};
-let routeIdx = 0;
 let status = 'brief'; // brief | run | pause | ending | done
 let hints = true;
 let camMode = 0; // 0 追車 1 駕駛座 2 鳥瞰
@@ -106,13 +98,7 @@ const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 
 function reset() {
-  car.edge = start.edge;
-  car.s = start.s;
-  car.lane = scenario.start.lane === 'left' ? 0 : start.edge.lanes - 1;
-  car.lat = graph.laneOffset(car.edge, car.lane);
-  car.speed = 40 / 3.6;
-  car.target = 40 / 3.6;
-  routeIdx = 0;
+  drive.reset();
   elapsed = 0;
   const p = graph.sample(car.edge, car.s);
   fwd.set(p.tx, p.ty).normalize();
@@ -121,51 +107,12 @@ function reset() {
 
 // ---- 駕駛 ----
 function changeLane(delta) {
-  if (status !== 'run' && status !== 'ending') return;
-  car.lane = Math.min(Math.max(car.lane + delta, 0), car.edge.lanes - 1);
+  if (status === 'run' || status === 'ending') drive.changeLane(delta);
 }
 
 function advance(dt) {
-  const accel = car.speed < car.target ? 2.5 : 5;
-  car.speed += Math.sign(car.target - car.speed) * Math.min(Math.abs(car.target - car.speed), accel * dt);
-  car.s += car.speed * dt;
-
-  while (car.s >= car.edge.len) {
-    const D = car.edge;
-    const br = graph.branches(D);
-    if (!br.length) {
-      car.s = D.len;
-      car.speed = car.target = 0;
-      if (status === 'run') endRun(false, '道路在這裡結束了（場景範圍外）。');
-      break;
-    }
-    let b;
-    const want = route[routeIdx + 1];
-    if (br.length === 1) {
-      b = br[0];
-      // 非決策點但路線要轉彎時，跟著路線走
-      if (want && want !== b.edge && graph.candidates(D).includes(want) && car.edge === route[routeIdx]) b = { edge: want, a: 0, b: D.lanes };
-    } else {
-      // 共用車道可以往兩個方向，照路線走
-      const hits = br.filter((x) => car.lane >= x.a && car.lane < x.b);
-      b = hits.find((x) => x.edge === want) || hits[0] || br.at(-1);
-    }
-    car.lane = graph.laneAfter(D, b, car.lane);
-    car.s -= D.len;
-    car.edge = b.edge;
-
-    if (car.edge === want && route[routeIdx] === D) {
-      routeIdx++;
-    } else if (status === 'run') {
-      const step = steps.find((st) => st.D === D);
-      endRun(false, `你開往了「${graph.labelFor(b.edge, D)}」。${step ? `正確做法：${step.text}。` : ''}`);
-    }
-    if (status === 'run' && isGoal(car.edge)) endRun(true);
-  }
-
-  const targetLat = graph.laneOffset(car.edge, car.lane);
-  const maxStep = 2.6 * dt;
-  car.lat += Math.min(Math.max(targetLat - car.lat, -maxStep), maxStep);
+  const e = drive.step(dt, status === 'run');
+  if (e) endRun(e.type === 'goal', e.message);
 }
 
 function placeCar(dt, snap = false) {
@@ -204,49 +151,16 @@ function placeCar(dt, snap = false) {
   camera.lookAt(camLook);
 }
 
-// 目前路段上，哪些車道照路線開下去，到岔路時會落在正確的車道範圍。
-// 岔路常落在很短的路段上，所以要從現在的位置一路推算過去。
-function goodLanes(step) {
-  const good = [];
-  for (let start = 0; start < car.edge.lanes; start++) {
-    let lane = start;
-    for (let i = routeIdx; i < step.i; i++) {
-      const D = route[i];
-      const b = graph.branches(D).find((x) => x.edge === route[i + 1]) || { edge: route[i + 1], a: 0, b: D.lanes };
-      lane = graph.laneAfter(D, b, lane);
-    }
-    if (lane >= step.ok.a && lane < step.ok.b) good.push(start);
-  }
-  return good.length ? good : [Math.min(step.ok.a, car.edge.lanes - 1)];
-}
-
-// 自動駕駛（測試用）：在岔路前換到正確車道
-function autopilot() {
-  const up = upcoming();
-  if (!up || up.d > 400) return;
-  const good = goodLanes(up.step);
-  if (good.includes(car.lane)) return;
-  changeLane(good[0] > car.lane ? 1 : -1);
-}
-
 // ---- 提示與 HUD ----
-function upcoming() {
-  const step = steps.find((st) => st.i >= routeIdx);
-  if (!step || car.edge !== route[routeIdx]) return null;
-  let d = car.edge.len - car.s;
-  for (let i = routeIdx + 1; i <= step.i; i++) d += route[i].len;
-  return { step, d };
-}
-
 let lastHud = '';
 function updateHud() {
-  const up = upcoming();
+  const up = drive.upcoming();
   const kmh = Math.round(car.speed * 3.6);
   $('road').textContent = car.edge.way.name ? alias(car.edge.way.name) : '（未命名道路）';
   $('speed').textContent = `${kmh} km/h　視角：${CAM_NAMES[camMode]}　提示：${hints ? '開' : '關'}`;
 
   let hint = '';
-  const good = up && up.d < 450 ? goodLanes(up.step) : null;
+  const good = up && up.d < 450 ? drive.goodLanes(up.step) : null;
   if (status === 'run' && hints && good) {
     const ok = good.includes(car.lane);
     const dist = up.d < 30 ? '現在' : `前方 ${Math.round(up.d / 10) * 10} m`;
@@ -264,7 +178,7 @@ function updateHud() {
 
   // 車道示意：目前路段的每一條車道，岔路前顯示各車道去向
   const n = car.edge.lanes;
-  const atDecision = up && up.step.i === routeIdx && up.d < 450;
+  const atDecision = up && up.step.i === drive.routeIdx && up.d < 450;
   const br = atDecision ? up.step.br : null;
   let lanes = '';
   for (let i = 0; i < n; i++) {
@@ -340,6 +254,7 @@ function showBriefing() {
     <h2>${esc(scenario.title)}</h2>
     <p>${esc(scenario.briefing)}</p>
     <details ${hints ? 'open' : ''}><summary>路線重點（${steps.length} 個岔路）</summary>${stepList()}</details>
+    ${scenario.auto ? '<p class="muted">這是程式依地圖資料自動產生的任務，尚未經人工校對。</p>' : ''}
     <p class="muted">車子會自動沿道路前進，你只要決定車道：<b>← →</b> 換車道、<b>↑ ↓</b> 加減速。手機請用畫面下方按鈕。<br>
     指示牌與車道配置由開放資料自動產生，可能和現場不同，實際開車請以現場標誌為準。</p>
     <div class="actions">
@@ -421,7 +336,7 @@ renderer.setAnimationLoop(() => {
   if (status === 'run' || status === 'ending') {
     elapsed += dt;
     if (AUTO && (autoTimer -= dt) < 0) {
-      autopilot();
+      drive.autopilot();
       autoTimer = 1.2;
     }
     advance(dt);
@@ -433,7 +348,7 @@ renderer.setAnimationLoop(() => {
 });
 
 // 給自動測試讀取狀態
-window.__drive = { graph, route, steps, car, camera, scene: scene3, THREE, get status() { return status; }, get routeIdx() { return routeIdx; }, overlayText: () => $('overlayBox').innerText };
+window.__drive = { graph, route, steps, car, camera, scene: scene3, THREE, scenario, get status() { return status; }, get routeIdx() { return drive.routeIdx; }, overlayText: () => $('overlayBox').innerText };
 
 // ---- 車子模型 ----
 function makeCar() {
