@@ -3,7 +3,7 @@
 由 `node scripts/check-drivable.mjs` 產生，請勿手動編輯。
 
 - 自動任務：**149 / 165（90%）** 個出入口可以自動試開
-- 手寫任務：`jianguo-changan-renai` ✅
+- 手寫任務：`jianguo-changan-renai` ✅、`jianguo-changan-renai（塞車 #1）` ✅、`jianguo-changan-renai（塞車 #2）` ✅、`jianguo-changan-renai（塞車 #3）` ✅
 
 ## 失敗原因統計
 

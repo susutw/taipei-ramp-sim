@@ -17,10 +17,10 @@ const regions = read('data/regions.json');
 const forks = existsSync('data/forks.json') ? read('data/forks.json') : {};
 
 const REASON = { fail: '自動駕駛開錯', end: '道路在場景外結束', timeout: '逾時' };
-const run = (graph, scenario) => {
+const run = (graph, scenario, opts) => {
   const plan = planScenario(graph, scenario);
   if (!plan) return { ok: false, reason: '找不到路線' };
-  const e = simulate(graph, plan);
+  const e = simulate(graph, plan, opts);
   return e.type === 'goal' ? { ok: true, steps: plan.steps.length } : { ok: false, reason: `${REASON[e.type]}${e.message ? `：${e.message}` : ''}` };
 };
 
@@ -45,11 +45,15 @@ for (const [name, region] of Object.entries(regions)) {
   }
 }
 
-// 手寫任務
+// 手寫任務：無車與塞車（三個亂數種子）都要能開完，避免路線被設計成根本切不進去
 const manual = [];
 for (const s of read('data/scenarios.json')) {
   const graph = new RoadGraph(read(`data/scenes/${s.scene}.json`), forks);
   manual.push({ id: s.id, ...run(graph, s) });
+  for (const seed of [1, 2, 3]) {
+    const r = run(graph, s, { traffic: 'jam', seed });
+    manual.push({ id: `${s.id}（塞車 #${seed}）`, ...r });
+  }
 }
 
 writeFileSync('data/drivable.json', JSON.stringify(drivable, null, 1));

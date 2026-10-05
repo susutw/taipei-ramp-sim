@@ -72,6 +72,11 @@ a { color: var(--accent); }
 #hint { top: 50%; left: 50%; transform: translate(-50%, -190px); font-size: 20px; font-weight: 700; text-align: center; }
 #hint .card { background: rgba(15,118,110,.88); padding: 10px 18px; }
 #hint .card.warn { background: rgba(220,38,38,.9); }
+#hint .card.signal { background: rgba(217,119,6,.92); margin-top: 6px; font-size: 17px; }
+#lanes div.sig { border-style: dashed; border-color: #f59e0b; }
+#overlay .levels { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+#overlay .levels button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 14px; cursor: pointer; }
+#overlay .levels button.on { background: var(--fg); color: #fff; border-color: var(--fg); }
 #bottom { bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; }
 #lanes { display: flex; gap: 4px; }
 #lanes div { width: 34px; height: 46px; border-radius: 6px; border: 2px solid rgba(255,255,255,.6); background: rgba(17,24,39,.55); display: grid; place-items: center; font-size: 20px; }

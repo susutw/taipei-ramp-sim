@@ -5,6 +5,7 @@
 //   r=<出入口 id> 自動產生該出入口的任務（場景見 data/regions.json）
 //   auto=1        自動駕駛走正確路線（測試用）
 //   fast=1        時間加速 4 倍（測試用）
+//   traffic=none|light|busy|jam  車流程度（預設：順暢；auto 測試時預設無車）
 //   debug=1       顯示岔路代碼與各去向的 way id（人工校對 data/forks.json 用）
 
 import * as THREE from 'three';
@@ -12,11 +13,13 @@ import { RoadGraph, isMajor, alias } from './graph.js';
 import { buildWorld } from './world.js';
 import { planScenario, Drive } from './sim.js';
 import { autoScenario } from './auto.js';
+import { LEVELS } from './traffic.js';
 
 const params = new URLSearchParams(location.search);
 const AUTO = params.has('auto');
 const DEBUG = params.has('debug');
 const TIME_SCALE = params.has('fast') ? 4 : 1;
+let trafficLevel = params.get('traffic') in LEVELS ? params.get('traffic') : AUTO ? 'none' : 'light';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -57,7 +60,7 @@ try {
   throw err;
 }
 const { route, steps } = plan;
-const drive = new Drive(graph, plan);
+const drive = new Drive(graph, plan, { traffic: trafficLevel });
 const car = drive.car;
 
 // ---- three.js ----
@@ -84,6 +87,44 @@ addEventListener('resize', () => {
 
 const carMesh = makeCar();
 scene3.add(carMesh);
+
+// 其他車：用 InstancedMesh 一次畫完
+const MAX_NPC = 260;
+const NPC_COLORS = [0xf3f4f6, 0x9ca3af, 0x374151, 0x1e3a8a, 0xb91c1c, 0xe5e7eb, 0x6b7280, 0x0f766e].map((c) => new THREE.Color(c));
+const npcBody = new THREE.InstancedMesh(new THREE.BoxGeometry(1.8, 0.75, 4.4), new THREE.MeshLambertMaterial(), MAX_NPC);
+const npcCabin = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 0.6, 2.2), new THREE.MeshLambertMaterial({ color: 0x1f2a36 }), MAX_NPC);
+for (let i = 0; i < MAX_NPC; i++) npcBody.setColorAt(i, NPC_COLORS[i % NPC_COLORS.length]);
+npcBody.count = npcCabin.count = 0;
+npcBody.frustumCulled = npcCabin.frustumCulled = false;
+scene3.add(npcBody, npcCabin);
+const npcMat = new THREE.Matrix4();
+const npcQ = new THREE.Quaternion();
+const npcPos = new THREE.Vector3();
+const ONE = new THREE.Vector3(1, 1, 1);
+const UP = new THREE.Vector3(0, 1, 0);
+const npcIds = new WeakMap();
+let npcSeq = 0;
+function drawTraffic() {
+  const cars = drive.traffic.cars;
+  const n = Math.min(cars.length, MAX_NPC);
+  for (let i = 0; i < n; i++) {
+    const c = cars[i];
+    if (!npcIds.has(c)) npcIds.set(c, npcSeq++);
+    const p = drive.traffic.pose(c);
+    const lift = p.major ? 0.14 : 0.06;
+    npcQ.setFromAxisAngle(UP, Math.atan2(-p.fx, p.fy));
+    npcPos.set(p.x, p.h + lift + 0.6, -p.y);
+    npcMat.compose(npcPos, npcQ, ONE);
+    npcBody.setMatrixAt(i, npcMat);
+    npcBody.setColorAt(i, NPC_COLORS[npcIds.get(c) % NPC_COLORS.length]);
+    npcPos.set(p.x - p.fx * 0.2, p.h + lift + 1.2, -(p.y - p.fy * 0.2));
+    npcMat.compose(npcPos, npcQ, ONE);
+    npcCabin.setMatrixAt(i, npcMat);
+  }
+  npcBody.count = npcCabin.count = n;
+  npcBody.instanceMatrix.needsUpdate = npcCabin.instanceMatrix.needsUpdate = true;
+  if (npcBody.instanceColor) npcBody.instanceColor.needsUpdate = true;
+}
 $('loading').remove();
 $('title').textContent = scenario.title;
 
@@ -157,7 +198,7 @@ function updateHud() {
   const up = drive.upcoming();
   const kmh = Math.round(car.speed * 3.6);
   $('road').textContent = car.edge.way.name ? alias(car.edge.way.name) : '（未命名道路）';
-  $('speed').textContent = `${kmh} km/h　視角：${CAM_NAMES[camMode]}　提示：${hints ? '開' : '關'}`;
+  $('speed').textContent = `${kmh} km/h　車流：${LEVELS[drive.level].label}　視角：${CAM_NAMES[camMode]}　提示：${hints ? '開' : '關'}`;
 
   let hint = '';
   const good = up && up.d < 450 ? drive.goodLanes(up.step) : null;
@@ -172,6 +213,10 @@ function updateHud() {
       .map((b) => `way ${b.edge.w}：第 ${b.a + 1}–${b.b} 車道 → ${esc(graph.labelFor(b.edge, D))}（${b.src}）`)
       .join('<br>')}</div>`;
   }
+  if (car.signal !== null && (status === 'run' || status === 'ending')) {
+    const dir = car.signal < car.lane ? '⬅' : '➡';
+    hint += `<div class="card signal">${dir} 方向燈：等待空隙${car.waitT > 3 ? '（放慢一點，讓旁邊的車先過）' : '…'}</div>`;
+  }
   if (status === 'pause') {
     hint = '<div class="card">暫停中（按空白鍵繼續）</div>';
   }
@@ -185,7 +230,7 @@ function updateHud() {
     const hits = br?.filter((x) => i >= x.a && i < x.b) || [];
     const arrow = hits.length ? hits.map((b) => (b.through ? '↑' : graph.turn(car.edge, b.edge) > 0 ? '↖' : '↗')).join('') : '↑';
     const isGood = hints && good?.includes(i);
-    lanes += `<div class="${isGood ? 'good' : ''} ${i === car.lane ? 'me' : ''}">${arrow}</div>`;
+    lanes += `<div class="${isGood ? 'good' : ''} ${i === car.lane ? 'me' : ''} ${i === car.signal ? 'sig' : ''}">${arrow}</div>`;
   }
   const html = hint + '|' + lanes;
   if (html !== lastHud) {
@@ -257,6 +302,10 @@ function showBriefing() {
     ${scenario.auto ? '<p class="muted">這是程式依地圖資料自動產生的任務，尚未經人工校對。</p>' : ''}
     <p class="muted">車子會自動沿道路前進，你只要決定車道：<b>← →</b> 換車道、<b>↑ ↓</b> 加減速。手機請用畫面下方按鈕。<br>
     指示牌與車道配置由開放資料自動產生，可能和現場不同，實際開車請以現場標誌為準。</p>
+    <div class="levels">車流：${Object.entries(LEVELS)
+      .map(([k, v]) => `<button class="${k === trafficLevel ? 'on' : ''}" data-level="${k}">${v.label}</button>`)
+      .join('')}</div>
+    <p class="muted" style="margin-top:6px">有車流時，換車道要先打方向燈，等到空隙才切得過去。越塞越要提早切。</p>
     <div class="actions">
       <button class="btn primary" data-act="go">開始（有提示）</button>
       <button class="btn" data-act="go-nohint">挑戰（不提示）</button>
@@ -285,9 +334,16 @@ function endRun(success, message = '') {
 }
 
 $('overlay').addEventListener('click', (e) => {
+  const level = e.target.closest('[data-level]')?.dataset.level;
+  if (level) {
+    trafficLevel = level;
+    for (const b of document.querySelectorAll('[data-level]')) b.classList.toggle('on', b.dataset.level === level);
+    return;
+  }
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!act) return;
   hints = act === 'go';
+  if (drive.level !== trafficLevel) drive.setTraffic(trafficLevel);
   reset();
   hideOverlay();
   status = 'run';
@@ -342,15 +398,21 @@ renderer.setAnimationLoop(() => {
     advance(dt);
   }
   placeCar(dt);
+  drawTraffic();
+  const blink = car.signal !== null && Math.floor(performance.now() / 350) % 2 === 0;
+  blinkL.visible = blink && car.signal < car.lane;
+  blinkR.visible = blink && car.signal > car.lane;
   updateHud();
   drawMinimap();
   renderer.render(scene3, camera);
 });
 
 // 給自動測試讀取狀態
-window.__drive = { graph, route, steps, car, camera, scene: scene3, THREE, scenario, get status() { return status; }, get routeIdx() { return drive.routeIdx; }, overlayText: () => $('overlayBox').innerText };
+window.__drive = { graph, route, steps, car, drive, camera, scene: scene3, THREE, scenario, get status() { return status; }, get routeIdx() { return drive.routeIdx; }, overlayText: () => $('overlayBox').innerText };
 
 // ---- 車子模型 ----
+var blinkL;
+var blinkR;
 function makeCar() {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 4.4), new THREE.MeshLambertMaterial({ color: 0xd62828 }));
@@ -358,6 +420,14 @@ function makeCar() {
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 2.2), new THREE.MeshLambertMaterial({ color: 0x1f2a36 }));
   cabin.position.set(0, 1.2, 0.2);
   g.add(body, cabin);
+  // 車尾方向燈（車頭朝 -Z，車尾在 +Z）
+  const lamp = () => new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.22, 0.1), new THREE.MeshBasicMaterial({ color: 0xffa500 }));
+  blinkL = lamp();
+  blinkR = lamp();
+  blinkL.position.set(-0.7, 0.75, 2.22);
+  blinkR.position.set(0.7, 0.75, 2.22);
+  blinkL.visible = blinkR.visible = false;
+  g.add(blinkL, blinkR);
   for (const [x, z] of [[-0.85, -1.4], [0.85, -1.4], [-0.85, 1.4], [0.85, 1.4]]) {
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.25, 12), new THREE.MeshLambertMaterial({ color: 0x111111 }));
     w.rotation.z = Math.PI / 2;
