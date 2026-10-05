@@ -87,3 +87,31 @@ test('laneAfter：從右側匯入主線，接最右側車道', () => {
   assert.equal(g.ways[b.edge.w].name, 'B');
   assert.equal(g.laneAfter(C, b, 0), 2);
 });
+
+// ---- 塞車模式 ----
+import { Traffic } from '../src/drive/traffic.js';
+
+test('塞車：旁邊車道有車並排時不能切，有空隙才能切', () => {
+  const g = new RoadGraph(forkScene({ lanes: 3 }));
+  const route = [g.edges.find((e) => e.w === 1), g.edges.find((e) => e.w === 2)];
+  const t = new Traffic(g, route, 'jam', 1);
+  const player = { S: 100, lane: 2, v: 2 };
+  t.cars = [t.makeCar(101, 1)];
+  assert.equal(t.canMerge(player, 1), false, '並排');
+  t.cars = [t.makeCar(120, 1), t.makeCar(80, 1)];
+  t.cars.forEach((c) => (c.v = 2));
+  assert.equal(t.canMerge(player, 1), true, '前後各有空隙');
+});
+
+test('塞車：禮讓的車會把玩家當前車而減速', () => {
+  const g = new RoadGraph(forkScene({ lanes: 3 }));
+  const route = [g.edges.find((e) => e.w === 1), g.edges.find((e) => e.w === 2)];
+  const t = new Traffic(g, route, 'jam', 1);
+  const player = { S: 100, lane: 2, v: 0 };
+  const back = t.makeCar(93, 1);
+  back.v = 5;
+  t.cars = [back];
+  back.yieldUntil = 10;
+  t.step(0.5, player);
+  assert.ok(back.v < 5, `禮讓時應減速，實際 ${back.v}`);
+});
