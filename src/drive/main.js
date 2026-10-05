@@ -146,7 +146,9 @@ function advance(dt) {
       // 非決策點但路線要轉彎時，跟著路線走
       if (want && want !== b.edge && graph.candidates(D).includes(want) && car.edge === route[routeIdx]) b = { edge: want, a: 0, b: D.lanes };
     } else {
-      b = br.find((x) => car.lane >= x.a && car.lane < x.b) || br.at(-1);
+      // 共用車道可以往兩個方向，照路線走
+      const hits = br.filter((x) => car.lane >= x.a && car.lane < x.b);
+      b = hits.find((x) => x.edge === want) || hits[0] || br.at(-1);
     }
     car.lane = graph.laneAfter(D, b, car.lane);
     car.s -= D.len;
@@ -253,7 +255,7 @@ function updateHud() {
   if (DEBUG && up) {
     const D = up.step.D;
     hint += `<div class="card" style="font-size:13px;font-weight:400;margin-top:6px;text-align:left">岔路代碼 <b>${graph.forkKey(D)}</b>（來向 ${D.lanes} 車道）<br>${up.step.br
-      .map((b) => `way ${b.edge.w}：第 ${b.a + 1}–${b.b} 車道 → ${esc(graph.labelFor(b.edge, D))}${b.checked ? '（已校對）' : ''}`)
+      .map((b) => `way ${b.edge.w}：第 ${b.a + 1}–${b.b} 車道 → ${esc(graph.labelFor(b.edge, D))}（${b.src}）`)
       .join('<br>')}</div>`;
   }
   if (status === 'pause') {
@@ -266,8 +268,8 @@ function updateHud() {
   const br = atDecision ? up.step.br : null;
   let lanes = '';
   for (let i = 0; i < n; i++) {
-    const b = br?.find((x) => i >= x.a && i < x.b);
-    const arrow = !b ? '↑' : b.through ? '↑' : graph.turn(car.edge, b.edge) > 0 ? '↖' : '↗';
+    const hits = br?.filter((x) => i >= x.a && i < x.b) || [];
+    const arrow = hits.length ? hits.map((b) => (b.through ? '↑' : graph.turn(car.edge, b.edge) > 0 ? '↖' : '↗')).join('') : '↑';
     const isGood = hints && good?.includes(i);
     lanes += `<div class="${isGood ? 'good' : ''} ${i === car.lane ? 'me' : ''}">${arrow}</div>`;
   }

@@ -162,6 +162,9 @@ for (const w of roads) {
     layer: layerOf(w),
     dest: t.destination || undefined,
     turnLanes: t['turn:lanes'] || undefined,
+    turnLanesF: t['turn:lanes:forward'] || undefined,
+    turnLanesB: t['turn:lanes:backward'] || undefined,
+    destLanes: t['destination:lanes'] || undefined,
   };
 }
 
