@@ -4,7 +4,7 @@
 //   s=<任務 id>   要開的手寫任務（data/scenarios.json）
 //   r=<出入口 id> 自動產生該出入口的任務（場景見 data/regions.json）
 //   auto=1        自動駕駛走正確路線（測試用）
-//   fast=1        時間加速 4 倍（測試用）
+//   fast=1        時間加速 4 倍；fast=N 加速 N 倍（測試用）
 //   traffic=none|light|busy|jam  車流程度（預設：順暢；auto 測試時預設無車）
 //   debug=1       顯示岔路代碼與各去向的 way id（人工校對 data/forks.json 用）
 
@@ -18,7 +18,8 @@ import { LEVELS } from './traffic.js';
 const params = new URLSearchParams(location.search);
 const AUTO = params.has('auto');
 const DEBUG = params.has('debug');
-const TIME_SCALE = params.has('fast') ? 4 : 1;
+const fastArg = params.get('fast');
+const TIME_SCALE = fastArg === null ? 1 : +fastArg > 1 ? +fastArg : 4;
 let trafficLevel = params.get('traffic') in LEVELS ? params.get('traffic') : AUTO ? 'none' : 'light';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -388,14 +389,16 @@ if (AUTO) {
 const clock = new THREE.Clock();
 let autoTimer = 0;
 renderer.setAnimationLoop(() => {
+  // 模擬固定用 0.1 秒以下的小步前進；加速或畫面很慢時一幀跑多步，跟車模型才會穩定
   const dt = Math.min(clock.getDelta(), 0.1) * TIME_SCALE;
-  if (status === 'run' || status === 'ending') {
-    elapsed += dt;
-    if (AUTO && (autoTimer -= dt) < 0) {
+  for (let left = dt; left > 1e-6 && (status === 'run' || status === 'ending'); left -= 0.1) {
+    const h = Math.min(0.1, left);
+    elapsed += h;
+    if (AUTO && (autoTimer -= h) < 0) {
       drive.autopilot();
       autoTimer = 1.2;
     }
-    advance(dt);
+    advance(h);
   }
   placeCar(dt);
   drawTraffic();

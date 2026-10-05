@@ -40,7 +40,7 @@ for (const s of scenarios) {
 // 塞車模式：精選任務在塞車時也要能切進去、開到終點
 {
   const s = scenarios[0];
-  await page.goto(`${BASE}/drive.html?s=${s.id}&auto=1&fast=1&traffic=jam`);
+  await page.goto(`${BASE}/drive.html?s=${s.id}&auto=1&fast=20&traffic=jam`);
   await page.waitForFunction(() => window.__drive, null, { timeout: 60000 });
   await page.waitForFunction(() => window.__drive.status === 'done', null, { timeout: 300000 });
   const result = await page.evaluate(() => window.__drive.overlayText().split('\n')[0]);
