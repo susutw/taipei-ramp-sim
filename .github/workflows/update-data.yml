@@ -1,0 +1,56 @@
+name: 每月更新道路資料
+
+on:
+  schedule:
+    - cron: '0 3 1 * *' # 每月 1 日 11:00（台北時間）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: 備份舊的出入口資料（做差異比對用）
+        run: cp data/ramps.geojson /tmp/ramps-old.geojson
+
+      - name: 重抓全台北出入口
+        run: scripts/update-data.sh
+
+      - name: 重新分區並抓取各區場景
+        run: |
+          node scripts/build-regions.mjs
+          scripts/update-scenes.sh --force
+          scripts/fetch-osm.sh data/raw/scene-jianguo.overpassql data/raw/scene-jianguo.json
+          node scripts/build-scene.mjs jianguo
+
+      - name: 驗證可試開的出入口
+        id: check
+        run: node scripts/check-drivable.mjs
+        continue-on-error: true
+
+      - name: 產生差異摘要
+        run: |
+          node scripts/diff-ramps.mjs /tmp/ramps-old.geojson data/ramps.geojson > /tmp/summary.md
+          if [ "${{ steps.check.outcome }}" != "success" ]; then
+            printf '\n> ⚠️ 有手寫任務驗證失敗，可能是 OSM 改了 way／node id，請看 docs/drivable-report.md。\n' >> /tmp/summary.md
+          fi
+          cat /tmp/summary.md
+
+      - name: 開 PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: data-update
+          delete-branch: true
+          commit-message: 每月更新 OpenStreetMap 道路資料
+          title: 每月更新道路資料
+          body-path: /tmp/summary.md
+          labels: 資料
